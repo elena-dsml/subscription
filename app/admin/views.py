@@ -8,13 +8,11 @@ from app.models.subscription import Subscription, SubscriptionStatus
 
 
 class AdminAuth(AuthenticationBackend):
-
     async def authenticate(self, request: Request) -> bool:
         try:
             payload = await auth_client.authenticate(request)
         except Exception:
             return False
-
         return payload.get("role") == "superuser"
 
 
@@ -28,11 +26,11 @@ class PlanAdmin(ModelView, model=Plan):
         Plan.amount,
         Plan.currency,
         Plan.period_days,
-        Plan.is_active,
+        Plan.status,
     ]
 
     column_searchable_list = [Plan.name]
-    column_filters = [Plan.currency, Plan.is_active]
+    column_filters = [Plan.currency, Plan.status]
 
     form_excluded_columns = [Plan.id]
 

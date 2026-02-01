@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from app.logging_config import logger
 from app.models.subscription import Subscription, SubscriptionStatus
 from app.services.billing_client import BillingClient
-from app.models.plan import Plan
+from app.models.plan import Plan, PlanStatus
 
 
 class SubscriptionService:
@@ -19,8 +19,12 @@ class SubscriptionService:
         return_url: str,
     ) -> Subscription:
         plan = await self.session.get(Plan, plan_id)
-        if not plan or not plan.is_active:
-            logger.warning("Attempted to subscribe to unavailable plan_id=%s by user_id=%s", plan_id, user_id)
+        if not plan or plan.status != PlanStatus.ACTIVE:
+            logger.warning(
+                "Attempted to subscribe to unavailable plan_id=%s by user_id=%s",
+                plan_id,
+                user_id,
+            )
             raise HTTPException(404, "Plan not available")
 
         subscription = Subscription(
@@ -44,12 +48,19 @@ class SubscriptionService:
             )
             logger.info(
                 "Created subscription %s for user_id=%s, plan_id=%s, amount=%s %s",
-                subscription.id, user_id, plan.id, plan.amount, plan.currency
+                subscription.id,
+                user_id,
+                plan.id,
+                plan.amount,
+                plan.currency,
             )
         except Exception as e:
             logger.exception(
                 "Failed to create payment for subscription %s (user_id=%s, plan_id=%s): %s",
-                subscription.id, user_id, plan.id, e
+                subscription.id,
+                user_id,
+                plan.id,
+                e,
             )
             raise
 
@@ -66,7 +77,11 @@ class SubscriptionService:
             return
 
         if subscription.status != SubscriptionStatus.PENDING_PAYMENT:
-            logger.info("Subscription %s activation skipped (status=%s)", subscription_id, subscription.status)
+            logger.info(
+                "Subscription %s activation skipped (status=%s)",
+                subscription_id,
+                subscription.status,
+            )
             return
 
         subscription.status = SubscriptionStatus.ACTIVE
@@ -78,11 +93,19 @@ class SubscriptionService:
     async def cancel(self, subscription_id: UUID, user_id: UUID) -> None:
         subscription = await self.session.get(Subscription, subscription_id)
         if not subscription or subscription.user_id != user_id:
-            logger.warning("Cancel failed: subscription %s not found for user_id=%s", subscription_id, user_id)
+            logger.warning(
+                "Cancel failed: subscription %s not found for user_id=%s",
+                subscription_id,
+                user_id,
+            )
             raise HTTPException(status_code=404)
 
         if subscription.status != SubscriptionStatus.ACTIVE:
-            logger.warning("Cancel failed: subscription %s status=%s", subscription_id, subscription.status)
+            logger.warning(
+                "Cancel failed: subscription %s status=%s",
+                subscription_id,
+                subscription.status,
+            )
             raise HTTPException(status_code=409, detail="Cannot cancel")
 
         subscription.status = SubscriptionStatus.CANCELLED
@@ -96,23 +119,38 @@ class SubscriptionService:
     ) -> None:
         subscription = await self.session.get(Subscription, subscription_id)
         if not subscription or subscription.user_id != user_id:
-            logger.warning("Refund failed: subscription %s not found for user_id=%s", subscription_id, user_id)
+            logger.warning(
+                "Refund failed: subscription %s not found for user_id=%s",
+                subscription_id,
+                user_id,
+            )
             raise HTTPException(status_code=404)
 
         if subscription.status not in {
             SubscriptionStatus.ACTIVE,
             SubscriptionStatus.CANCELLED,
         }:
-            logger.warning("Refund not allowed: subscription %s status=%s", subscription_id, subscription.status)
+            logger.warning(
+                "Refund not allowed: subscription %s status=%s",
+                subscription_id,
+                subscription.status,
+            )
             raise HTTPException(status_code=409, detail="Refund not allowed")
 
         if not subscription.payment_id:
-            logger.warning("Refund not allowed: subscription %s payment not completed", subscription_id)
+            logger.warning(
+                "Refund not allowed: subscription %s payment not completed",
+                subscription_id,
+            )
             raise HTTPException(status_code=409, detail="Payment not completed")
 
         plan = await self.session.get(Plan, subscription.plan_id)
         if not plan:
-            logger.error("Refund failed: plan %s not found for subscription %s", subscription.plan_id, subscription_id)
+            logger.error(
+                "Refund failed: plan %s not found for subscription %s",
+                subscription.plan_id,
+                subscription_id,
+            )
             raise HTTPException(status_code=404, detail="Plan not found")
 
         try:
@@ -126,11 +164,16 @@ class SubscriptionService:
             subscription.status = SubscriptionStatus.REFUND_REQUESTED
             logger.info(
                 "Refund requested for subscription %s (payment_id=%s, amount=%s %s)",
-                subscription_id, subscription.payment_id, plan.amount, plan.currency
+                subscription_id,
+                subscription.payment_id,
+                plan.amount,
+                plan.currency,
             )
         except Exception as e:
             logger.exception(
                 "Failed to request refund for subscription %s (payment_id=%s): %s",
-                subscription_id, subscription.payment_id, e
+                subscription_id,
+                subscription.payment_id,
+                e,
             )
             raise

@@ -19,7 +19,9 @@ class Plan(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str]
     description: Mapped[str | None] = mapped_column(default=None)
-    price: Mapped[float]
+    amount: Mapped[float]
+    currency: Mapped[str]
+    period_days: Mapped[int]
     status: Mapped[PlanStatus] = mapped_column(
         Enum(PlanStatus), default=PlanStatus.ACTIVE
     )
