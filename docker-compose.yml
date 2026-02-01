@@ -1,6 +1,6 @@
 services:
   subscription-postgres:
-    image: postgres:18.1-trixie
+    image: postgres:17.6-trixie
     environment:
       POSTGRES_USER: ${SUBSCRIPTION_PG_USER:?}
       POSTGRES_PASSWORD: ${SUBSCRIPTION_PG_PASSWORD:?}
@@ -14,7 +14,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      - subscription-postgres_data:/var/lib/postgresql/data
 
   subscription-kafka-0:
     image: apache/kafka:4.1.1
@@ -53,11 +53,12 @@ services:
   subscription-nginx:
     image: nginx:1.29.4-trixie
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx.subscription.conf:/etc/nginx/conf.d/nginx.subscription.conf:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/nginx.subscription.conf:/etc/nginx/conf.d/nginx.subscription.conf:ro
     depends_on:
-      - subscription-api
-    restart: always
+      subscription-api:
+        condition: service_healthy
+    restart: unless-stopped
     labels:
       filebeat_enable: "true"
       service: "subscription-nginx"
@@ -67,7 +68,7 @@ services:
   subscription-api:
     build:
       context: .
-      dockerfile: app/Dockerfile
+      dockerfile: Dockerfile
     env_file:
       - .env
     environment:
@@ -77,6 +78,10 @@ services:
       SUBSCRIPTION_PG_USER: ${SUBSCRIPTION_PG_USER:?}
       SUBSCRIPTION_PG_PASSWORD: ${SUBSCRIPTION_PG_PASSWORD:?}
       SUBSCRIPTION_PG_DB: ${SUBSCRIPTION_PG_DB:?}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 5s
+      retries: 5
     depends_on:
       subscription-postgres:
         condition: service_healthy
@@ -85,20 +90,5 @@ services:
     ports:
       - "8000:8000"
 
-  subscription-api-worker-0:
-    build: .
-    command: .venv/bin/python -m worker
-    env_file:
-      - .env
-    environment:
-      SUBSCRIPTION_PG_HOST: subscription-postgres
-      SUBSCRIPTION_PG_PORT: 5432
-      SUBSCRIPTION_KAFKA_BOOTSTRAP_SERVERS: subscription-kafka-0:9092
-      SUBSCRIPTION_PG_USER: ${SUBSCRIPTION_PG_USER:?}
-      SUBSCRIPTION_PG_PASSWORD: ${SUBSCRIPTION_PG_PASSWORD:?}
-      SUBSCRIPTION_PG_DB: ${SUBSCRIPTION_PG_DB:?}
-    depends_on:
-      - subscription-api
-
 volumes:
-  pg_data:
+  subscription-postgres_data:
