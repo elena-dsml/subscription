@@ -1,0 +1,104 @@
+services:
+  subscription-postgres:
+    image: postgres:18.1-trixie
+    environment:
+      POSTGRES_USER: ${SUBSCRIPTION_PG_USER:?}
+      POSTGRES_PASSWORD: ${SUBSCRIPTION_PG_PASSWORD:?}
+      POSTGRES_DB: ${SUBSCRIPTION_PG_DB:?}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  subscription-kafka-0:
+    image: apache/kafka:4.1.1
+    ports:
+      - "19092:19092"
+    environment:
+      KAFKA_NODE_ID: 0
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_INTER_BROKER_LISTENER_NAME: BROKER
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: BROKER://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,BROKER_EXTERNAL://0.0.0.0:19092
+      KAFKA_ADVERTISED_LISTENERS: BROKER://subscription-kafka-0:9092,BROKER_EXTERNAL://localhost:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,BROKER:PLAINTEXT,BROKER_EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 0@subscription-kafka-0:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      filebeat_enable: "true"
+      service: "subscription-kafka-0"
+
+  subscription-kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:v1.3.0
+    ports:
+      - "8081:8080"
+    environment:
+      DYNAMIC_CONFIG_ENABLED: "true"
+
+  subscription-nginx:
+    image: nginx:1.29.4-trixie
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx.subscription.conf:/etc/nginx/conf.d/nginx.subscription.conf:ro
+    depends_on:
+      - subscription-api
+    restart: always
+    labels:
+      filebeat_enable: "true"
+      service: "subscription-nginx"
+    ports:
+      - "8008:8000"
+
+  subscription-api:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    env_file:
+      - .env
+    environment:
+      SUBSCRIPTION_PG_HOST: subscription-postgres
+      SUBSCRIPTION_PG_PORT: 5432
+      SUBSCRIPTION_KAFKA_BOOTSTRAP_SERVERS: subscription-kafka-0:9092
+      SUBSCRIPTION_PG_USER: ${SUBSCRIPTION_PG_USER:?}
+      SUBSCRIPTION_PG_PASSWORD: ${SUBSCRIPTION_PG_PASSWORD:?}
+      SUBSCRIPTION_PG_DB: ${SUBSCRIPTION_PG_DB:?}
+    depends_on:
+      subscription-postgres:
+        condition: service_healthy
+      subscription-kafka-0:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  subscription-api-worker-0:
+    build: .
+    command: .venv/bin/python -m worker
+    env_file:
+      - .env
+    environment:
+      SUBSCRIPTION_PG_HOST: subscription-postgres
+      SUBSCRIPTION_PG_PORT: 5432
+      SUBSCRIPTION_KAFKA_BOOTSTRAP_SERVERS: subscription-kafka-0:9092
+      SUBSCRIPTION_PG_USER: ${SUBSCRIPTION_PG_USER:?}
+      SUBSCRIPTION_PG_PASSWORD: ${SUBSCRIPTION_PG_PASSWORD:?}
+      SUBSCRIPTION_PG_DB: ${SUBSCRIPTION_PG_DB:?}
+    depends_on:
+      - subscription-api
+
+volumes:
+  pg_data:
